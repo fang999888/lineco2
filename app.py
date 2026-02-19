@@ -15,13 +15,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# LINE 設定
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# DeepSeek 設定
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
@@ -36,28 +34,35 @@ SYSTEM_PROMPT = """你是一位碳管理專家，專注於提供具體的排放�
 
 回答要簡潔，只給重點，不要多餘說明。"""
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=['GET'])
 def home():
     return "LINE Carbon Bot is running."
 
-# 重要：這裡必須指定 methods=['POST']
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    # 詳細日誌
+    logger.info("===== 收到 LINE Webhook 請求 =====")
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
-    logger.info("Request body: " + body)
+    logger.info(f"signature: {signature}")
+    logger.info(f"body: {body}")
 
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
+        logger.error("Invalid signature")
         abort(400)
+    except Exception as e:
+        logger.error(f"Handler error: {e}")
+        abort(500)
 
-    return 'OK'
+    return 'OK', 200
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text.strip()
     reply_token = event.reply_token
+    logger.info(f"收到使用者訊息: {user_message}")
 
     if user_message.lower() == 'help':
         reply_text = "請輸入格式：\n行業 製程 排放源\n例如：鋼鐵業 電弧爐 用電"
@@ -82,12 +87,10 @@ def query_emission(industry, process, source):
         return "錯誤：DeepSeek API 金鑰未設定"
 
     prompt = f"行業：{industry}\n製程：{process}\n排放源：{source}"
-
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
     }
-
     payload = {
         "model": "deepseek-chat",
         "messages": [
@@ -104,6 +107,7 @@ def query_emission(industry, process, source):
             data = response.json()
             return data['choices'][0]['message']['content']
         else:
+            logger.error(f"DeepSeek error: {response.status_code}")
             return f"查詢失敗（錯誤碼：{response.status_code}）"
     except Exception as e:
         logger.error(f"Exception: {e}")
